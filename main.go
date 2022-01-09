@@ -24,8 +24,8 @@ import (
 )
 
 type Config struct {
-	CertPath   string `json:"certPath"`
-	KeyPath    string `json:"keyPath"`
+	CertPath   string `json:"certPath, omitempty"`
+	KeyPath    string `json:"keyPath, omitempty"`
 	ListenAddr string `json:"listenAddr"`
 	ListenPort string `json:"listenPort"`
 }
@@ -208,9 +208,16 @@ func main() {
 
 	go func() {
 		defer close(sig)
-		if err := srv.ListenAndServeTLS(conf.CertPath, conf.KeyPath); err != http.ErrServerClosed {
-			log.Printf("ListenAndServe(): %v", err)
-			return
+		if conf.CertPath == "" || conf.KeyPath == "" {
+			if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+				log.Printf("ListenAndServe(): %v", err)
+				return
+			}
+		} else {
+			if err := srv.ListenAndServeTLS(conf.CertPath, conf.KeyPath); err != http.ErrServerClosed {
+				log.Printf("ListenAndServe(): %v", err)
+				return
+			}
 		}
 	}()
 
