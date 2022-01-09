@@ -65,7 +65,7 @@ type CaptchaRes struct {
 }
 
 type Captcha struct {
-	cache *captcha.Store
+	cache captcha.Store
 }
 
 func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -115,13 +115,32 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 		return
 	}
 
-	val := c.cache.Get(_captchaID)
+	val := c.cache.Get(_captchaID, true)
 
-	if string(val) != _phrase {
+	if !bytes.Equal(val, ConvertStringToByte(_phrase)) {
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase")
 		return
 	}
 
+}
+
+func ConvertStringToByte(digits string) []byte {
+	if digits == "" {
+		return nil
+	}
+	ns := make([]byte, len(digits))
+	for i := range ns {
+		d := digits[i]
+		switch {
+		case '0' <= d && d <= '9':
+			ns[i] = d - '0'
+		case d == ' ' || d == ',':
+			// ignore
+		default:
+			return nil
+		}
+	}
+	return ns
 }
 
 func ThrowError(w http.ResponseWriter, ErrorType int, ErrorDescription string, opts ...string) {
