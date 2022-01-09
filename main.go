@@ -20,7 +20,6 @@ import (
 	"github.com/dchest/captcha"
 	"github.com/google/uuid"
 	"github.com/julienschmidt/httprouter"
-	"github.com/tidwall/buntdb"
 )
 
 type Config struct {
@@ -66,7 +65,7 @@ type CaptchaRes struct {
 }
 
 type Captcha struct {
-	cache *buntdb.DB
+	cache *captcha.Store
 }
 
 func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -78,12 +77,8 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	_image := &captcha.Image{}
 	_cdata := CaptchaData{}
 
-	c.cache.Update(func(tx *buntdb.Tx) {
-		tx.Set(id, string(d), &buntdb.SetOptions{
-			Expires: true,
-			TTL:     10 * time.Minute,
-		})
-	})
+	c.cache.Set(id, d)
+
 	if imgHeight != "" && imgHeight != "" {
 		width, _ := strconv.Atoi(imgWidth)
 		height, _ := strconv.Atoi(imgHeight)
@@ -120,18 +115,13 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 		return
 	}
 
-	val, err := c.cache.View(func(tx *buntdb.Tx) (string, error) {
-		return tx.Get(_captchaID)
-	})
+	val := c.cache.Get(_captchaID)
 
-	if err != nil {
-		ThrowError(w, CREDENTIAL_NOT_MATCH, "No Such id", "phrase")
+	if string(val) != _phrase {
+		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase")
 		return
 	}
 
-	if val != _phrase {
-		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase")
-	}
 }
 
 func ThrowError(w http.ResponseWriter, ErrorType int, ErrorDescription string, opts ...string) {
@@ -188,10 +178,8 @@ func main() {
 	sig := make(chan struct{})
 	router := httprouter.New()
 
-	db, _ := buntdb.Open(":memory:")
-	defer db.Close()
 	C := &Captcha{
-		cache: db,
+		cache: captcha.NewMemoryStore(100, 10*time.Minute),
 	}
 	router.GET("/captcha", C.GenCaptcha)
 	router.GET("/captcha/:captcha_id/submitResult", C.HandleCaptcha)
