@@ -68,7 +68,7 @@ type Captcha struct {
 	cache captcha.Store
 }
 
-func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+func (c Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	imgWidth := r.URL.Query().Get("width")
 	imgHeight := r.URL.Query().Get("height")
 	id := uuid.NewString()
@@ -93,6 +93,7 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 
 	if err := jpeg.Encode(&buf, _image.Paletted, nil); err != nil {
 		ThrowError(w, UNKNOWN_INNER_ERROR, err.Error())
+		return
 	}
 
 	ret := CaptchaRes{}
@@ -105,12 +106,12 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	WriteResult(w, http.StatusCreated, ret)
 }
 
-func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func (c Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	_captchaID := ps.ByName("captcha_id")
 
 	_phrase := r.URL.Query().Get("phrase")
 
-	if _phrase == "" {
+	if _phrase == "" || _captchaID == "" {
 		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
 		return
 	}
@@ -197,7 +198,7 @@ func main() {
 	sig := make(chan struct{})
 	router := httprouter.New()
 
-	C := &Captcha{
+	C := Captcha{
 		cache: captcha.NewMemoryStore(100, 10*time.Minute),
 	}
 	router.GET("/captcha", C.GenCaptcha)
