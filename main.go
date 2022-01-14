@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,27 +16,36 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/dchest/captcha"
+	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/julienschmidt/httprouter"
 )
 
 type Config struct {
-	CertPath   string `json:"certPath, omitempty"`
-	KeyPath    string `json:"keyPath, omitempty"`
-	ListenAddr string `json:"listenAddr"`
-	ListenPort string `json:"listenPort"`
+	CertPath      string `json:"certPath, omitempty"`
+	KeyPath       string `json:"keyPath, omitempty"`
+	RedisAddr     string `json:"redisAddr, omitempty"`
+	RedisPort     string `json:"redisPort, omitempty"`
+	RedisPassword string `json:"redisPassword, omitempty"`
+	RedisDB       int    `json:"redisDB, omitempty"`
+	ListenAddr    string `json:"listenAddr"`
+	ListenPort    string `json:"listenPort"`
+	Secret        string `json:"secret_phrase"`
 }
 
 var (
 	configPath = flag.String("conf", "", "Config File Path")
+	ctx        = context.Background()
 )
 
 const (
 	UNKNOWN_INNER_ERROR        = 1
+	ITEM_DOES_NOT_EXIST        = 2
 	CREDENTIAL_NOT_MATCH       = 14
 	REQUEST_PARAM_FORMAT_ERROR = 20
 )
@@ -64,20 +75,64 @@ type CaptchaRes struct {
 	CaptchaDATA CaptchaData `json:"captcha_data"`
 }
 
-type Captcha struct {
-	cache captcha.Store
+//Unfortunately, there is no up-to-date document for this struct
+type OAuthScope struct {
+	Info           string `json:"basic_info"`
+	Notification   string `json:"notification"`
+	ListManagedApp string `json:"list_managed_apps"`
 }
 
-func (c Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+type Captcha struct {
+	cache    *redis.Client
+	secret   string
+	scopeMap map[string]*OAuthScope
+	mu       *sync.Mutex
+}
+
+func (c *Captcha) CheckCaptchaIDExist(id string) (*OAuthScope, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if val, ok := c.scopeMap[id]; !ok || val == nil {
+		return nil, false
+	}
+
+	return c.scopeMap[id], true
+}
+
+func (c *Captcha) ClearCaptchaID(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.scopeMap, id)
+}
+
+func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+
+	//About scope, see https://github.com/InteractivePlus/InteractiveSSO-Captcha/issues/1
+	scope := r.URL.Query().Get("scope")
+	//Optical
 	imgWidth := r.URL.Query().Get("width")
 	imgHeight := r.URL.Query().Get("height")
+
+	//Check whether scope is valid or not
+	var scopeFormatted OAuthScope
+	if err := json.Unmarshal([]byte(scope), &scopeFormatted); err != nil {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "Fail to parse scope", "scope")
+		return
+	}
+
 	id := uuid.NewString()
 	d := captcha.RandomDigits(5)
 	var buf bytes.Buffer
 	_image := &captcha.Image{}
 	_cdata := CaptchaData{}
 
-	c.cache.Set(id, d)
+	//the map type is not concurrency safe
+	c.mu.Lock()
+	c.scopeMap[id] = &scopeFormatted
+	c.mu.Unlock()
+	c.cache.Set(ctx, id, hex.EncodeToString(d), 10*time.Minute)
 
 	if imgHeight != "" && imgHeight != "" {
 		width, _ := strconv.Atoi(imgWidth)
@@ -95,18 +150,41 @@ func (c Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter
 		ThrowError(w, UNKNOWN_INNER_ERROR, err.Error())
 		return
 	}
-
-	ret := CaptchaRes{}
 	_cdata.PhraseLen = 5
 	_cdata.JpegBase64 = base64.StdEncoding.EncodeToString(buf.Bytes())
-	ret.CaptchaId = id
-	ret.CaptchaDATA = _cdata
-	ret.ExpireTime = time.Now().UTC().Unix() + 600
+	ret := CaptchaRes{
+		CaptchaId:   id,
+		CaptchaDATA: _cdata,
+		ExpireTime:  time.Now().UTC().Add(10 * time.Minute).Unix(),
+	}
 
 	WriteResult(w, http.StatusCreated, ret)
 }
 
-func (c Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func (c *Captcha) Communicate(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	_captchaID := ps.ByName("captcha_id")
+	_secretPhrase := r.URL.Query().Get("secret_phrase")
+
+	if _captchaID == "" || _secretPhrase == "" {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
+		return
+	}
+
+	// Secure compare!!! DON'T MODIFY THIS
+	if subtle.ConstantTimeCompare([]byte(c.secret), []byte(_secretPhrase)) == 1 {
+		scope, EXISTS := c.CheckCaptchaIDExist(_captchaID)
+		if !EXISTS {
+			ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
+			return
+		}
+		WriteResult(w, http.StatusOK, scope)
+	} else {
+		ThrowError(w, CREDENTIAL_NOT_MATCH, "Secret Phrase Not correct", "secret_phrase")
+	}
+
+}
+
+func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	_captchaID := ps.ByName("captcha_id")
 
 	_phrase := r.URL.Query().Get("phrase")
@@ -115,8 +193,22 @@ func (c Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpro
 		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
 		return
 	}
+	_, EXISTS := c.CheckCaptchaIDExist(_captchaID)
 
-	val := c.cache.Get(_captchaID, true)
+	if !EXISTS {
+		ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
+		return
+	}
+
+	hexVal, err := c.cache.Get(ctx, _captchaID).Result()
+
+	if err != nil || hexVal == "" {
+		c.ClearCaptchaID(_captchaID)
+		ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
+		return
+	}
+
+	val, _ := hex.DecodeString(hexVal)
 
 	if !bytes.Equal(val, ConvertStringToByte(_phrase)) {
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase")
@@ -191,37 +283,54 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	if conf.Secret == "" {
+		log.Fatal("No Secret Phrase")
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
+	rdo := &redis.Options{
+		Addr:     "localhost:6379",
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	}
+
+	if conf.RedisDB != 0 {
+		rdo.DB = conf.RedisDB
+	}
+
+	if conf.RedisAddr != "" && conf.RedisPort != "" {
+		rdo.Addr = fmt.Sprintf("%s:%s", conf.RedisAddr, conf.RedisPort)
+	}
+
+	if conf.RedisPassword != "" {
+		rdo.Password = conf.RedisPassword
+	}
+	rdb := redis.NewClient(rdo)
+	defer rdb.Close()
+	//Try to connect to the redis server
+	if err = rdb.Ping(ctx).Err(); err != nil {
+		log.Fatal("Fail to connect to redis")
+	}
+
 	sig := make(chan struct{})
 	router := httprouter.New()
-
-	C := Captcha{
-		cache: captcha.NewMemoryStore(100, 10*time.Minute),
+	var mu sync.Mutex
+	C := &Captcha{
+		cache:    rdb,
+		secret:   conf.Secret,
+		scopeMap: map[string]*OAuthScope{},
+		mu:       &mu,
 	}
 	router.GET("/captcha", C.GenCaptcha)
+	router.GET("/captcha/:captcha_id/submitStatus", C.Communicate)
 	router.GET("/captcha/:captcha_id/submitResult", C.HandleCaptcha)
 
 	srv := &http.Server{
 		Handler: router,
 		Addr:    fmt.Sprintf("%s:%s", conf.ListenAddr, conf.ListenPort),
 	}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				if err := srv.Shutdown(context.Background()); err != nil {
-					log.Printf("HTTP server Shutdown: %v", err)
-				}
-			case <-sig:
-				log.Println("HTTP Server Exits")
-				return
-			}
-		}
-	}()
 
 	go func() {
 		defer close(sig)
@@ -238,9 +347,16 @@ func main() {
 		}
 	}()
 
-	<-sigCh
+	for {
+		select {
+		case <-sigCh:
+			if err := srv.Shutdown(context.Background()); err != nil {
+				log.Printf("HTTP server Shutdown: %v", err)
+			}
+		case <-sig:
+			log.Println("HTTP Server Exits")
+			return
+		}
+	}
 
-	cancel()
-
-	log.Println("HTTP Exit")
 }
