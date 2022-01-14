@@ -1,4 +1,5 @@
 {
     "listenAddr": "0.0.0.0",
-    "listenPort": "80"
+    "listenPort": "80",
+    "secret_phrase": ""
 }
