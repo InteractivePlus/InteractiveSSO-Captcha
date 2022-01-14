@@ -2,6 +2,7 @@
     "listenAddr": "0.0.0.0",
     "listenPort": "80",
     "certPath": "/path/to/cert",
-    "keyPath": "/path/to/key"
+    "keyPath": "/path/to/key",
+    "secret_phrase": ""
 
 }
