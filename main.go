@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -79,6 +80,15 @@ type Captcha struct {
 	secret string
 }
 
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		// The Pool's New function should generally only return pointer
+		// types, since a pointer can be put into the return interface
+		// value without an allocation:
+		return new(bytes.Buffer)
+	},
+}
+
 func (c *Captcha) CheckCaptchaIDExist(id string) bool {
 	val, err := c.cache.Exists(ctx, id).Result()
 
@@ -110,7 +120,7 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	}
 	id := uuid.NewString()
 	d := captcha.RandomDigits(5)
-	var buf bytes.Buffer
+
 	_image := &captcha.Image{}
 	_cdata := CaptchaData{}
 
@@ -128,11 +138,15 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 		_cdata.Width = 150
 		_cdata.Height = 40
 	}
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
 
-	if err := jpeg.Encode(&buf, _image.Paletted, nil); err != nil {
+	if err := jpeg.Encode(buf, _image.Paletted, nil); err != nil {
 		ThrowError(w, UNKNOWN_INNER_ERROR, err.Error())
 		return
 	}
+
 	_cdata.PhraseLen = 5
 	_cdata.JpegBase64 = base64.StdEncoding.EncodeToString(buf.Bytes())
 	ret := CaptchaRes{
