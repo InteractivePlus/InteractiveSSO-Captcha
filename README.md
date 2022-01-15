@@ -10,4 +10,4 @@ Captcha system for InteractiveSSO
 ./interactivesso-captcha -conf "config.json"
 ```
 
-Can also modify environment variable $PORT, $SECRET_KEY, $REDIS_ADDR, $REDIS_PORT to change config.
+Can also modify environment variable $PORT, $SECRET_KEY, $REDIS_ADDR, $REDIS_PORT, and $REDIS_PASSWORD to change config.

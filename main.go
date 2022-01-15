@@ -319,6 +319,8 @@ func main() {
 
 	if conf.RedisPassword != "" {
 		rdo.Password = conf.RedisPassword
+	} else if os.Getenv("REDIS_PASSWORD") != "" {
+		rdo.Password = os.Getenv("REDIS_PASSWORD")
 	}
 
 	log.Println("Connecting To Redis Server", rdo.Addr, "with db", rdo.DB, "with password", rdo.Password)
