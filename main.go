@@ -75,26 +75,19 @@ type CaptchaRes struct {
 	CaptchaDATA CaptchaData `json:"captcha_data"`
 }
 
-//Unfortunately, there is no up-to-date document for this struct
-type OAuthScope struct {
-	Info           string `json:"basic_info"`
-	Notification   string `json:"notification"`
-	ListManagedApp string `json:"list_managed_apps"`
-}
-
 type Captcha struct {
 	cache    *redis.Client
 	secret   string
-	scopeMap map[string]*OAuthScope
+	scopeMap map[string]string
 	mu       *sync.Mutex
 }
 
-func (c *Captcha) CheckCaptchaIDExist(id string) (*OAuthScope, bool) {
+func (c *Captcha) CheckCaptchaIDExist(id string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if val, ok := c.scopeMap[id]; !ok || val == nil {
-		return nil, false
+	if _, ok := c.scopeMap[id]; !ok {
+		return "", false
 	}
 
 	return c.scopeMap[id], true
@@ -116,12 +109,10 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	imgHeight := r.URL.Query().Get("height")
 
 	//Check whether scope is valid or not
-	var scopeFormatted OAuthScope
-	if err := json.Unmarshal([]byte(scope), &scopeFormatted); err != nil {
-		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "Fail to parse scope", "scope")
+	if scope == "" {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
 		return
 	}
-
 	id := uuid.NewString()
 	d := captcha.RandomDigits(5)
 	var buf bytes.Buffer
@@ -130,7 +121,7 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 
 	//the map type is not concurrency safe
 	c.mu.Lock()
-	c.scopeMap[id] = &scopeFormatted
+	c.scopeMap[id] = scope
 	c.mu.Unlock()
 	c.cache.Set(ctx, id, hex.EncodeToString(d), 10*time.Minute)
 
@@ -177,7 +168,9 @@ func (c *Captcha) Communicate(w http.ResponseWriter, r *http.Request, ps httprou
 			ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
 			return
 		}
-		WriteResult(w, http.StatusOK, scope)
+		var params = map[string]string{}
+		params["scope"] = scope
+		WriteResult(w, http.StatusOK, params)
 	} else {
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Secret Phrase Not correct", "secret_phrase")
 	}
@@ -320,7 +313,7 @@ func main() {
 	C := &Captcha{
 		cache:    rdb,
 		secret:   conf.Secret,
-		scopeMap: map[string]*OAuthScope{},
+		scopeMap: map[string]string{},
 		mu:       &mu,
 	}
 	router.GET("/captcha", C.GenCaptcha)
