@@ -34,8 +34,8 @@ type Config struct {
 	RedisPassword string `json:"redisPassword, omitempty"`
 	RedisDB       int    `json:"redisDB, omitempty"`
 	ListenAddr    string `json:"listenAddr"`
-	ListenPort    string `json:"listenPort"`
-	Secret        string `json:"secret_phrase"`
+	ListenPort    string `json:"listenPort, omitempty"`
+	Secret        string `json:"secret_phrase, omitempty"`
 }
 
 var (
@@ -115,7 +115,7 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 
 	//Check whether scope is valid or not
 	if scope == "" {
-		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "scope")
 		return
 	}
 	id := uuid.NewString()
@@ -162,8 +162,12 @@ func (c *Captcha) Communicate(w http.ResponseWriter, r *http.Request, ps httprou
 	_captchaID := ps.ByName("captcha_id")
 	_secretPhrase := r.URL.Query().Get("secret_phrase")
 
-	if _captchaID == "" || _secretPhrase == "" {
-		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
+	if _captchaID == "" {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "captcha_id")
+		return
+	}
+	if _secretPhrase == "" {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "secret_phrase")
 		return
 	}
 
@@ -217,7 +221,6 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase")
 		return
 	}
-
 }
 
 func ConvertStringToByte(digits string) []byte {
@@ -286,6 +289,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if conf.Secret == "" && os.Getenv("SECRET_KEY") != "" {
+		conf.Secret = os.Getenv("SECRET_KEY")
+	}
 	if conf.Secret == "" {
 		log.Fatal("No Secret Phrase")
 	}
@@ -310,12 +316,17 @@ func main() {
 	if conf.RedisPassword != "" {
 		rdo.Password = conf.RedisPassword
 	}
+
+	log.Println("Connecting To Redis Server", rdo.Addr, "with db", rdo.DB, "with password", rdo.Password)
+
 	rdb := redis.NewClient(rdo)
 	defer rdb.Close()
 	//Try to connect to the redis server
 	if err = rdb.Ping(ctx).Err(); err != nil {
 		log.Fatal("Fail to connect to redis")
 	}
+
+	log.Println("Connection Successful!")
 
 	sig := make(chan struct{})
 	router := httprouter.New()
@@ -327,9 +338,20 @@ func main() {
 	router.GET("/captcha/:captcha_id/submitStatus", C.Communicate)
 	router.GET("/captcha/:captcha_id/submitResult", C.HandleCaptcha)
 
+	RealListenPort := conf.ListenPort
+	if RealListenPort == "" {
+		if os.Getenv("PORT") != "" {
+			RealListenPort = os.Getenv("PORT")
+		} else {
+			RealListenPort = "8080"
+		}
+	}
+
+	log.Println("Listening on", conf.ListenAddr, "with port", RealListenPort)
+
 	srv := &http.Server{
 		Handler: router,
-		Addr:    fmt.Sprintf("%s:%s", conf.ListenAddr, conf.ListenPort),
+		Addr:    fmt.Sprintf("%s:%s", conf.ListenAddr, RealListenPort),
 	}
 
 	go func() {

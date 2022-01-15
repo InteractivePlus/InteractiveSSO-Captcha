@@ -9,3 +9,5 @@ Captcha system for InteractiveSSO
 ```bash
 ./interactivesso-captcha -conf "config.json"
 ```
+
+Can also modify environment variable $PORT and $SECRET_KEY to change config.
