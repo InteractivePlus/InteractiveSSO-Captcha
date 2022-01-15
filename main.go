@@ -90,6 +90,11 @@ func (c *Captcha) CheckCaptchaIDExist(id string) (string, bool) {
 		return "", false
 	}
 
+	val, err := c.cache.Exists(ctx, id).Result()
+
+	if err != nil || val != 1 {
+		return "", false
+	}
 	return c.scopeMap[id], true
 }
 
