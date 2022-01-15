@@ -1,3 +1,5 @@
 build:
   docker:
     web: Dockerfile
+run:
+  web: /captchaservice -conf "config_docker_with_environment.json"
