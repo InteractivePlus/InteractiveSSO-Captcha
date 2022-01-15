@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -76,34 +75,24 @@ type CaptchaRes struct {
 }
 
 type Captcha struct {
-	cache    *redis.Client
-	secret   string
-	scopeMap map[string]string
-	mu       *sync.Mutex
+	cache  *redis.Client
+	secret string
 }
 
-func (c *Captcha) CheckCaptchaIDExist(id string) (string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if _, ok := c.scopeMap[id]; !ok {
-		return "", false
-	}
-
+func (c *Captcha) CheckCaptchaIDExist(id string) bool {
 	val, err := c.cache.Exists(ctx, id).Result()
 
 	if err != nil || val != 1 {
-		delete(c.scopeMap, id)
-		return "", false
+		return false
 	}
-	return c.scopeMap[id], true
-}
 
-func (c *Captcha) ClearCaptchaID(id string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	val, err = c.cache.Exists(ctx, id+".scope").Result()
 
-	delete(c.scopeMap, id)
+	if err != nil || val != 1 {
+		return false
+	}
+
+	return true
 }
 
 func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -125,11 +114,8 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	_image := &captcha.Image{}
 	_cdata := CaptchaData{}
 
-	//the map type is not concurrency safe
-	c.mu.Lock()
-	c.scopeMap[id] = scope
-	c.mu.Unlock()
 	c.cache.Set(ctx, id, hex.EncodeToString(d), 10*time.Minute)
+	c.cache.Set(ctx, id+".scope", scope, 10*time.Minute)
 
 	if imgHeight != "" && imgHeight != "" {
 		width, _ := strconv.Atoi(imgWidth)
@@ -169,9 +155,14 @@ func (c *Captcha) Communicate(w http.ResponseWriter, r *http.Request, ps httprou
 
 	// Secure compare!!! DON'T MODIFY THIS
 	if subtle.ConstantTimeCompare([]byte(c.secret), []byte(_secretPhrase)) == 1 {
-		scope, EXISTS := c.CheckCaptchaIDExist(_captchaID)
+		EXISTS := c.CheckCaptchaIDExist(_captchaID)
 		if !EXISTS {
 			ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
+			return
+		}
+		scope, err := c.cache.Get(ctx, _captchaID+".scope").Result()
+		if err != nil {
+			ThrowError(w, UNKNOWN_INNER_ERROR, err.Error())
 			return
 		}
 		var params = map[string]string{}
@@ -192,7 +183,7 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
 		return
 	}
-	_, EXISTS := c.CheckCaptchaIDExist(_captchaID)
+	EXISTS := c.CheckCaptchaIDExist(_captchaID)
 
 	if !EXISTS {
 		ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
@@ -202,7 +193,6 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 	hexVal, err := c.cache.Get(ctx, _captchaID).Result()
 
 	if err != nil || hexVal == "" {
-		c.ClearCaptchaID(_captchaID)
 		ThrowError(w, ITEM_DOES_NOT_EXIST, "Items Not Exists", "captcha_id")
 		return
 	}
@@ -315,12 +305,9 @@ func main() {
 
 	sig := make(chan struct{})
 	router := httprouter.New()
-	var mu sync.Mutex
 	C := &Captcha{
-		cache:    rdb,
-		secret:   conf.Secret,
-		scopeMap: map[string]string{},
-		mu:       &mu,
+		cache:  rdb,
+		secret: conf.Secret,
 	}
 	router.GET("/captcha", C.GenCaptcha)
 	router.GET("/captcha/:captcha_id/submitStatus", C.Communicate)
