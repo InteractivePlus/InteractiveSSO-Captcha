@@ -300,7 +300,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	rdo := &redis.Options{
-		Addr:     "localhost:6379",
+		Addr:     "", //No Addr Set
 		Password: "", // no password set
 		DB:       0,  // use default DB
 	}
@@ -311,6 +311,10 @@ func main() {
 
 	if conf.RedisAddr != "" && conf.RedisPort != "" {
 		rdo.Addr = fmt.Sprintf("%s:%s", conf.RedisAddr, conf.RedisPort)
+	} else if os.Getenv("REDIS_ADDR") != "" && os.Getenv("REDIS_PORT") != "" {
+		rdo.Addr = fmt.Sprintf("%s:%s", os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PORT"))
+	} else {
+		rdo.Addr = "localhost:6379"
 	}
 
 	if conf.RedisPassword != "" {
