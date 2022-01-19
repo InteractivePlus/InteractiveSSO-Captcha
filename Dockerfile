@@ -9,12 +9,12 @@ RUN go mod download
 # copy necessary files
 COPY *.go ./
 
-RUN go build -o captchaservice
+RUN go build -o /captchaservice
 
 FROM alpine
 WORKDIR /app
-COPY --from=0 /app/captchaservice ./
+COPY --from=0 /captchaservice ./
 COPY config_docker_with_environment.json ./
 
 EXPOSE $PORT
-CMD ["./captchaservice", "-conf", "config_docker_with_environment.json"]
+CMD ["/app/captchaservice", "-conf", "/app/config_docker_with_environment.json"]
