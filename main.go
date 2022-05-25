@@ -43,38 +43,6 @@ var (
 	ctx        = context.Background()
 )
 
-const (
-	UNKNOWN_INNER_ERROR        = 1
-	ITEM_DOES_NOT_EXIST        = 2
-	CREDENTIAL_NOT_MATCH       = 14
-	REQUEST_PARAM_FORMAT_ERROR = 20
-)
-
-type GeneralResult struct {
-	ErrCode             int             `json:"errorCode"`
-	ErrorDescription    string          `json:"errorDescription,omitempty"`
-	ErrorFile           string          `json:"errorFile,omitempty"`
-	ErrorLine           int             `json:"errorLine,omitempty"`
-	ErrorParam          string          `json:"errorParam,omitempty"`
-	Item                string          `json:"item,omitempty"`
-	Credential          string          `json:"credential,omitempty"`
-	UserDefinedRootData string          `json:"user-defined-root-data,omitempty"`
-	Data                json.RawMessage `json:"data,omitempty"`
-}
-
-type CaptchaData struct {
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	JpegBase64 string `json:"jpegBase64"`
-	PhraseLen  int    `json:"phraseLen"`
-}
-
-type CaptchaRes struct {
-	CaptchaId   string      `json:"captcha_id"`
-	ExpireTime  int64       `json:"expire_time"`
-	CaptchaDATA CaptchaData `json:"captcha_data"`
-}
-
 type Captcha struct {
 	cache  *redis.Client
 	secret string
@@ -124,8 +92,8 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	_image := &captcha.Image{}
 	_cdata := CaptchaData{}
 
-	c.cache.Set(ctx, id, hex.EncodeToString(d), 10*time.Minute)
-	c.cache.Set(ctx, id+".scope", scope, 10*time.Minute)
+	c.cache.Set(ctx, id, hex.EncodeToString(d), EXPIRE)
+	c.cache.Set(ctx, id+".scope", scope, EXPIRE)
 
 	if imgHeight != "" && imgHeight != "" {
 		width, _ := strconv.Atoi(imgWidth)
@@ -152,13 +120,13 @@ func (c *Captcha) GenCaptcha(w http.ResponseWriter, r *http.Request, _ httproute
 	ret := CaptchaRes{
 		CaptchaId:   id,
 		CaptchaDATA: _cdata,
-		ExpireTime:  time.Now().UTC().Add(10 * time.Minute).Unix(),
+		ExpireTime:  time.Now().UTC().Add(EXPIRE).Unix(),
 	}
 
 	WriteResult(w, http.StatusCreated, ret)
 }
 
-func (c *Captcha) Communicate(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func (c *Captcha) SubmitStatus(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	_captchaID := ps.ByName("captcha_id")
 	_secretPhrase := r.URL.Query().Get("secret_phrase")
 
@@ -186,6 +154,9 @@ func (c *Captcha) Communicate(w http.ResponseWriter, r *http.Request, ps httprou
 		var params = map[string]string{}
 		params["scope"] = scope
 		WriteResult(w, http.StatusOK, params)
+		//Record the status
+
+		c.cache.Set(ctx, _captchaID+".status", "1", EXPIRE)
 	} else {
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Secret Phrase Not correct", "secret_phrase")
 	}
@@ -223,52 +194,24 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 	}
 }
 
-func ConvertStringToByte(digits string) []byte {
-	if digits == "" {
-		return nil
-	}
-	ns := make([]byte, len(digits))
-	for i := range ns {
-		d := digits[i]
-		switch {
-		case '0' <= d && d <= '9':
-			ns[i] = d - '0'
-		case d == ' ' || d == ',':
-			// ignore
-		default:
-			return nil
-		}
-	}
-	return ns
-}
-
-func ThrowError(w http.ResponseWriter, ErrorType int, ErrorDescription string, opts ...string) {
-	_newErr := &GeneralResult{
-		ErrCode:          ErrorType,
-		ErrorDescription: ErrorDescription,
-	}
-	switch ErrorType {
-	case REQUEST_PARAM_FORMAT_ERROR:
-		_newErr.ErrorParam = opts[0]
-	case CREDENTIAL_NOT_MATCH:
-		_newErr.Credential = opts[0]
+func (c *Captcha) CheckSubmitStatus(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	_captchaID := ps.ByName("captcha_id")
+	if _captchaID == "" {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
+		return
 	}
 
-	ret, _ := json.Marshal(_newErr)
-	w.Write(ret)
-}
-
-func WriteResult(w http.ResponseWriter, httpCode int, ret interface{}) {
-	_newRet := &GeneralResult{
-		ErrCode: 0,
+	status, err := c.cache.Get(_captchaID + ".status").Result()
+	scope, _ := c.cache.Get(_captchaID + ".scope").Result()
+	var params = map[string]interface{}{}
+	params["scope"] = scope
+	if err != nil || status != "1" {
+		params["SubmitSuccess"] = false
+	} else {
+		params["SubmitSuccess"] = true
 	}
 
-	_newRet.Data, _ = json.Marshal(ret)
-
-	_ret, _ := json.Marshal(_newRet)
-
-	w.WriteHeader(httpCode)
-	w.Write(_ret)
+	WriteResult(w, http.StatusOK, params)
 }
 
 func main() {
@@ -341,8 +284,9 @@ func main() {
 		secret: conf.Secret,
 	}
 	router.GET("/captcha", C.GenCaptcha)
-	router.GET("/captcha/:captcha_id/submitStatus", C.Communicate)
+	router.GET("/captcha/:captcha_id/submitStatus", C.SubmitStatus)
 	router.GET("/captcha/:captcha_id/submitResult", C.HandleCaptcha)
+	router.GET("/captcha/:captcha_id/checkSubmitStatus", C.CheckSubmitStatus)
 
 	RealListenPort := conf.ListenPort
 	if RealListenPort == "" {
