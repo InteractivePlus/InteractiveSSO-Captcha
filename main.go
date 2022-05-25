@@ -196,22 +196,32 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 
 func (c *Captcha) CheckSubmitStatus(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	_captchaID := ps.ByName("captcha_id")
+	_secretPhrase := r.URL.Query().Get("secret_phrase")
 	if _captchaID == "" {
 		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "phrase")
 		return
 	}
 
-	status, err := c.cache.Get(ctx, _captchaID+".status").Result()
-	scope, _ := c.cache.Get(ctx, _captchaID+".scope").Result()
-	var params = map[string]interface{}{}
-	params["scope"] = scope
-	if err != nil || status != "1" {
-		params["submitSuccess"] = false
-	} else {
-		params["submitSuccess"] = true
+	if _secretPhrase == "" {
+		ThrowError(w, REQUEST_PARAM_FORMAT_ERROR, "No Enough Params", "secret_phrase")
+		return
 	}
 
-	WriteResult(w, http.StatusOK, params)
+	if subtle.ConstantTimeCompare([]byte(c.secret), []byte(_secretPhrase)) == 1 {
+		status, err := c.cache.Get(ctx, _captchaID+".status").Result()
+		scope, _ := c.cache.Get(ctx, _captchaID+".scope").Result()
+		var params = map[string]interface{}{}
+		params["scope"] = scope
+		if err != nil || status != "1" {
+			params["submitSuccess"] = false
+		} else {
+			params["submitSuccess"] = true
+		}
+		WriteResult(w, http.StatusOK, params)
+	} else {
+		ThrowError(w, CREDENTIAL_NOT_MATCH, "Secret Phrase Not correct", "secret_phrase")
+	}
+
 }
 
 func main() {
