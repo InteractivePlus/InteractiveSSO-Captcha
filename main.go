@@ -206,9 +206,9 @@ func (c *Captcha) CheckSubmitStatus(w http.ResponseWriter, r *http.Request, ps h
 	var params = map[string]interface{}{}
 	params["scope"] = scope
 	if err != nil || status != "1" {
-		params["SubmitSuccess"] = false
+		params["submitSuccess"] = false
 	} else {
-		params["SubmitSuccess"] = true
+		params["submitSuccess"] = true
 	}
 
 	WriteResult(w, http.StatusOK, params)

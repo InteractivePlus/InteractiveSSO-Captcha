@@ -24,7 +24,6 @@ type GeneralResult struct {
 	Credential          string          `json:"credential,omitempty"`
 	UserDefinedRootData string          `json:"user-defined-root-data,omitempty"`
 	Data                json.RawMessage `json:"data,omitempty"`
-	SubmitSuccess       bool            `json:"submitSuccess,omitempty"`
 }
 
 type CaptchaData struct {
