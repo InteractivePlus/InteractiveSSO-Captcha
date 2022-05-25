@@ -201,8 +201,8 @@ func (c *Captcha) CheckSubmitStatus(w http.ResponseWriter, r *http.Request, ps h
 		return
 	}
 
-	status, err := c.cache.Get(_captchaID + ".status").Result()
-	scope, _ := c.cache.Get(_captchaID + ".scope").Result()
+	status, err := c.cache.Get(ctx, _captchaID+".status").Result()
+	scope, _ := c.cache.Get(ctx, _captchaID+".scope").Result()
 	var params = map[string]interface{}{}
 	params["scope"] = scope
 	if err != nil || status != "1" {
