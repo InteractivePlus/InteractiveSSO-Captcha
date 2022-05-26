@@ -156,11 +156,11 @@ func (c *Captcha) SubmitStatus(w http.ResponseWriter, r *http.Request, ps httpro
 		params["scope"] = scope
 
 		status, err := c.cache.Get(ctx, _captchaID+".status").Result()
-		if err != nil {
+		if err != nil || status != "1" {
 			//Record the status
 			c.cache.Set(ctx, _captchaID+".status", "1", EXPIRE)
 			params["submitSuccess"] = false
-		} else if status == "1" {
+		} else {
 			params["submitSuccess"] = true
 		}
 		WriteResult(w, http.StatusOK, params)
