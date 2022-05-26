@@ -187,7 +187,7 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 
 	//Check if captcha has been submitted before
 	status, err := c.cache.Get(ctx, _captchaID+".status").Result()
-	if err != nil && status != "1" {
+	if status == "0" {
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase") //Already submitted before, so every trial afterwards are WRONG
 		return
 	}
