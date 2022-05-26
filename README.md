@@ -2,7 +2,7 @@
 Captcha system for InteractiveSSO
 
 
-[Document]([https://www.interactiveplus.org/InteractivePDK2021-DesignDoc/Backend/SimpleCaptchaAPI.html](https://www.interactiveplus.org/TechDocs/InteractiveSSO/SimpleCaptcha/SimpleCaptcha.html#overview))
+[Document](https://www.interactiveplus.org/TechDocs/InteractiveSSO/SimpleCaptcha/SimpleCaptcha.html)
 
 ## Usage
 
