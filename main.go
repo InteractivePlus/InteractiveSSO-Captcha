@@ -157,8 +157,6 @@ func (c *Captcha) SubmitStatus(w http.ResponseWriter, r *http.Request, ps httpro
 
 		status, err := c.cache.Get(ctx, _captchaID+".status").Result()
 		if err != nil || status != "1" {
-			//Record the status
-			c.cache.Set(ctx, _captchaID+".status", "1", EXPIRE)
 			params["submitSuccess"] = false
 		} else {
 			params["submitSuccess"] = true
@@ -187,6 +185,13 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 		return
 	}
 
+	//Check if captcha has been submitted before
+	status, err := c.cache.Get(ctx, _captchaID+".status").Result()
+	if err != nil && status != "1" {
+		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase") //Already submitted before, so every trial afterwards are WRONG
+		return
+	}
+
 	hexVal, err := c.cache.Get(ctx, _captchaID).Result()
 
 	if err != nil || hexVal == "" {
@@ -197,9 +202,13 @@ func (c *Captcha) HandleCaptcha(w http.ResponseWriter, r *http.Request, ps httpr
 	val, _ := hex.DecodeString(hexVal)
 
 	if !bytes.Equal(val, ConvertStringToByte(_phrase)) {
+		c.cache.Set(ctx, _captchaID+".status", "0", EXPIRE) //Record Submission answer wrong result
 		ThrowError(w, CREDENTIAL_NOT_MATCH, "Phrase Not correct", "phrase")
 		return
 	}
+
+	//Record the submission status
+	c.cache.Set(ctx, _captchaID+".status", "1", EXPIRE)
 }
 
 func main() {
